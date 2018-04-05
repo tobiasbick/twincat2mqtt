@@ -1,0 +1,10 @@
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '' *)
+(* @OBJECTFLAGS := '0, 8' *)
+TYPE ST_MqttTelegram :
+STRUCT
+	arMqttData 	: ARRAY[0..544] OF BYTE;
+	nDataLength	: UDINT := 0;
+END_STRUCT
+END_TYPE
+(* @END_DECLARATION := '0' *)

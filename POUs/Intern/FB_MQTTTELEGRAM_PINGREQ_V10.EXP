@@ -1,0 +1,102 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_MqttTelegram_PingReq_V10
+VAR_IN_OUT
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+	iState 				: INT := 0;
+	bMustSend			: BOOL := FALSE;
+	bPingReqSent		: BOOL := FALSE;
+	stMqttTelegram		: ST_MqttTelegram;
+END_VAR
+VAR CONSTANT
+	C_STARTUP		: INT := 0;
+	C_BUILD_PING	: INT := 100;
+	C_SEND_WAIT		: INT := 110;
+	C_IDLE			: INT := 500;
+END_VAR
+(* @END_DECLARATION := '0' *)
+CASE iState OF
+	C_STARTUP:
+		bPingReqSent := FALSE;
+
+		IF stMqttSettings.bValidConnection THEN
+			iState := C_IDLE;
+		END_IF;
+
+	(* build pingreq telegram *)
+	C_BUILD_PING:
+		FC_Mqtt_ClearTelegram_V10(
+			stMqttTelegram	:= stMqttTelegram,
+			stMqttSettings	:= stMqttSettings
+		);
+
+		(* MQTT Control Packet type *)
+		stMqttTelegram.arMqttData[0] := 192;
+		(* Remaining Length *)
+		stMqttTelegram.arMqttData[1] := 0;
+
+		stMqttTelegram.nDataLength := 2;
+
+		iState := C_SEND_WAIT;
+
+	(* send telegram *)
+	C_SEND_WAIT:
+		IF stMqttSettings.stMqttSendTelegram.nDataLength = 0 THEN
+			FC_Mqtt_CopyTelegram_V10(
+				stMqttSrcTelegram	:= stMqttTelegram,
+				stMqttDestTelegram	:= stMqttSettings.stMqttSendTelegram,
+				stMqttSettings		:= stMqttSettings
+			);
+
+			bPingReqSent	:= TRUE;
+			iState			:= C_IDLE;
+		END_IF;
+
+		IF NOT stMqttSettings.bValidConnection THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* idle *)
+	C_IDLE:
+		bMustSend := FALSE;
+
+		IF stMqttSettings.usKeepAliveTime > 0 THEN
+			bMustSend := stMqttSettings.tonSendPingReq.Q;
+		END_IF;
+
+		IF
+			stMqttSettings.bValidConnection
+			AND bMustSend
+			AND NOT bPingReqSent
+		THEN
+			iState := C_BUILD_PING;
+		END_IF;
+
+		(* Check received telegram *)
+		IF
+			bPingReqSent
+			AND stMqttSettings.stMqttReceivedTelegram.nDataLength = 2
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[0] = 208
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[1] = 0
+		THEN
+			FC_Mqtt_ClearTelegram_V10(
+				stMqttTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+				stMqttSettings	:= stMqttSettings
+			);
+			bPingReqSent := FALSE;
+		END_IF;
+
+		IF NOT stMqttSettings.bValidConnection THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	ELSE
+		iState := C_STARTUP;
+END_CASE;
+
+END_FUNCTION_BLOCK

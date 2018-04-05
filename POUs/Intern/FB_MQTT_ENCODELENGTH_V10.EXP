@@ -1,0 +1,73 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_Mqtt_EncodeLength_V10
+VAR_INPUT
+	dwLength	: DWORD;
+END_VAR
+VAR_OUTPUT
+	bLength1	: BYTE := 0;
+	bLength2	: BYTE := 0;
+	bLength3	: BYTE := 0;
+	bLength4	: BYTE := 0;
+	bAmount		: BYTE := 0;
+END_VAR
+VAR
+	dwWorkLength	: DWORD;
+	dwCopyLength	: DWORD;
+END_VAR
+(* @END_DECLARATION := '0' *)
+bAmount 		:= 1;
+dwCopyLength	:= dwLength;
+
+WHILE dwCopyLength > 0 DO
+	dwWorkLength := dwCopyLength MOD 128;
+	dwCopyLength := dwCopyLength / 128;
+
+	IF dwCopyLength > 0 THEN
+		dwWorkLength := dwWorkLength OR 128;
+	END_IF;
+
+	CASE bAmount OF
+		1:
+			bLength1 := DWORD_TO_BYTE(dwWorkLength);
+
+		2:
+			bLength2 := DWORD_TO_BYTE(dwWorkLength);
+
+		3:
+			bLength3 := DWORD_TO_BYTE(dwWorkLength);
+
+		4:
+			bLength4 := DWORD_TO_BYTE(dwWorkLength);
+
+		ELSE
+			;
+	END_CASE;
+
+	IF dwCopyLength > 0 THEN
+		bAmount := bAmount + 1;
+	END_IF;
+
+	IF bAmount > 4 THEN
+		(* hmm *)
+		RETURN;
+	END_IF;
+END_WHILE;
+(*
+do
+	encodedByte = X MOD 128
+	X = X DIV 128
+
+	// if there are more data to encode, set the top bit of this byte
+	if ( X > 0 )
+		encodedByte = encodedByte OR 128
+	endif
+
+	'output' encodedByte
+while ( X > 0 )
+*)
+
+END_FUNCTION_BLOCK

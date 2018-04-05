@@ -1,0 +1,171 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_Mqtt_Publish_V10
+VAR_INPUT
+	sTopic	: STRING[255];
+	sValue	: STRING[255];
+	bRetain	: BOOL := TRUE;
+END_VAR
+VAR_OUTPUT
+	bBusy	: BOOL := FALSE;
+END_VAR
+VAR_IN_OUT
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+	bFirstPublishDone	: BOOL := FALSE;
+	bMustPublish		: BOOL := FALSE;
+	sLastValue			: STRING[255];
+	iState 				: INT := 0;
+	iLengthTopic		: INT := 0;
+	iLengthValue		: INT := 0;
+	wTopicLength		: WORD;
+	stMqttTelegram		: ST_MqttTelegram;
+	fbMqttEncodeLength	: FB_Mqtt_EncodeLength_V10;
+	bLength1			: BYTE;
+	bLength2			: BYTE;
+	bLength3			: BYTE;
+	bLength4			: BYTE;
+	bLengthAmount		: BYTE;
+END_VAR
+VAR CONSTANT
+	C_STARTUP			: INT := 0;
+	C_BUILD_TELEGRAM	: INT := 100;
+	C_SEND_WAIT			: INT := 110;
+	C_IDLE				: INT := 500;
+END_VAR
+(* @END_DECLARATION := '0' *)
+CASE iState OF
+	C_STARTUP:
+		bFirstPublishDone	:= FALSE;
+		bBusy				:= FALSE;
+
+		IF stMqttSettings.bValidConnection THEN
+			iState := C_IDLE;
+		END_IF;
+
+	(* build publish telegram *)
+	C_BUILD_TELEGRAM:
+		bBusy := TRUE;
+		iLengthTopic := LEN(sTopic);
+		iLengthValue := LEN(sValue);
+
+		FC_Mqtt_ClearTelegram_V10(
+			stMqttTelegram	:= stMqttTelegram,
+			stMqttSettings	:= stMqttSettings
+		);
+
+		wTopicLength := iLengthTopic;
+		wTopicLength := HOST_TO_BE16(wTopicLength);
+
+		(* Calculate length *)
+		(* 2 byte length topic, x byte length topic, x byte length value *)
+		fbMqttEncodeLength(
+			dwLength := 2 + iLengthTopic + iLengthValue,
+			bLength1 => bLength1,
+			bLength2 => bLength2,
+			bLength3 => bLength3,
+			bLength4 => bLength4,
+			bAmount	 => bLengthAmount
+		);
+
+		(* MQTT Control Packet type, no DUP, no QoS, Retain *)
+		stMqttTelegram.arMqttData[0] := 48;
+		IF bRetain THEN
+			stMqttTelegram.arMqttData[0].0 := 1;
+		END_IF;
+
+		(* Remaining Length *)
+		CASE bLengthAmount OF
+			1:
+				stMqttTelegram.arMqttData[1] := bLength1;
+
+			2:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+
+			3:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+				stMqttTelegram.arMqttData[3] := bLength3;
+
+			4:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+				stMqttTelegram.arMqttData[3] := bLength3;
+				stMqttTelegram.arMqttData[4] := bLength4;
+
+			ELSE
+				iState 					:= C_STARTUP;
+				stMqttSettings.bError	:= TRUE;
+		END_CASE;
+
+		(* Length MSB Topic *)
+		stMqttTelegram.arMqttData[1 + bLengthAmount] := WORD_TO_BYTE(wTopicLength);
+		(* Length LSB Topic *)
+		stMqttTelegram.arMqttData[2 + bLengthAmount] := WORD_TO_BYTE(SHR(wTopicLength, 8));
+
+		(* Add topic *)
+		MEMCPY(
+			destAddr	:= ADR(stMqttTelegram.arMqttData[3 + bLengthAmount]),
+		    srcAddr		:= ADR(sTopic),
+			n  			:= iLengthTopic
+		);
+
+		(* Add Payload *)
+		MEMCPY(
+			destAddr	:= ADR(stMqttTelegram.arMqttData[3 + bLengthAmount + iLengthTopic]),
+		    srcAddr		:= ADR(sValue),
+			n  			:= iLengthValue
+		);
+
+		(* 1 byte header, x byte variable length, 2 byte topic lenght, x byte topic, x byte value *)
+		stMqttTelegram.nDataLength := 1 + bLengthAmount + 2 + iLengthTopic + iLengthValue;
+
+		iState := C_SEND_WAIT;
+
+	(* send telegram *)
+	C_SEND_WAIT:
+		IF stMqttSettings.stMqttSendTelegram.nDataLength = 0 THEN
+			FC_Mqtt_CopyTelegram_V10(
+				stMqttSrcTelegram	:= stMqttTelegram,
+				stMqttDestTelegram	:= stMqttSettings.stMqttSendTelegram,
+				stMqttSettings		:= stMqttSettings
+			);
+
+			iState				:= C_IDLE;
+			bFirstPublishDone	:= TRUE;
+			sLastValue			:= sValue;
+		END_IF;
+
+		IF NOT stMqttSettings.bValidConnection THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* idle *)
+	C_IDLE:
+		bBusy 			:= FALSE;
+		bMustPublish 	:= sLastValue <> sValue;
+
+		IF
+			stMqttSettings.bValidConnection
+			AND (
+				bMustPublish
+				OR NOT bFirstPublishDone
+			)
+		THEN
+			iState := C_BUILD_TELEGRAM;
+		END_IF;
+
+		IF NOT stMqttSettings.bValidConnection THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	ELSE
+		iState := C_STARTUP;
+END_CASE;
+
+END_FUNCTION_BLOCK

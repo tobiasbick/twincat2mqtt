@@ -1,0 +1,202 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_MqttTelegram_Connect_V10
+VAR_IN_OUT
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+	iState 				: INT := 0;
+	idLength			: INT;
+	stMqttTelegram		: ST_MqttTelegram;
+	fbMqttEncodeLength	: FB_Mqtt_EncodeLength_V10;
+	bLength1			: BYTE;
+	bLength2			: BYTE;
+	bLength3			: BYTE;
+	bLength4			: BYTE;
+	bLengthAmount		: BYTE;
+END_VAR
+VAR CONSTANT
+	C_STARTUP		: INT := 0;
+	C_BUILD_CONNECT	: INT := 100;
+	C_SEND_WAIT		: INT := 110;
+	C_IDLE			: INT := 500;
+END_VAR
+(* @END_DECLARATION := '0' *)
+CASE iState OF
+	C_STARTUP:
+		IF
+			NOT stMqttSettings.bDisconnect
+			AND NOT stMqttSettings.bError
+			AND stMqttSettings.bSocketConnection
+			AND stMqttSettings.bActive
+		THEN
+			iState := C_IDLE;
+		END_IF;
+
+	(* build connect telegram *)
+	C_BUILD_CONNECT:
+		FC_Mqtt_ClearTelegram_V10(
+			stMqttTelegram	:= stMqttTelegram,
+			stMqttSettings	:= stMqttSettings
+		);
+
+		(* get client id length *)
+		idLength := LEN(stMqttSettings.sMqttClientId);
+		IF idLength < 1 THEN
+			stMqttSettings.sMqttClientId := 'x';
+		END_IF;
+
+		IF idLength > 23 THEN
+			idLength := 23;
+		END_IF;
+
+		(* Calculate length *)
+		(* 10 byte header, 2 byte data length, data length *)
+		fbMqttEncodeLength(
+			dwLength := 10 + 2 + INT_TO_BYTE(idLength),
+			bLength1 => bLength1,
+			bLength2 => bLength2,
+			bLength3 => bLength3,
+			bLength4 => bLength4,
+			bAmount	 => bLengthAmount
+		);
+
+		(* MQTT Control Packet type *)
+		stMqttTelegram.arMqttData[0] := 16;
+		(* Remaining Length *)
+		CASE bLengthAmount OF
+			1:
+				stMqttTelegram.arMqttData[1] := bLength1;
+
+			2:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+
+			3:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+				stMqttTelegram.arMqttData[3] := bLength3;
+
+			4:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+				stMqttTelegram.arMqttData[3] := bLength3;
+				stMqttTelegram.arMqttData[4] := bLength4;
+		END_CASE;
+		(* Length MSB *)
+		stMqttTelegram.arMqttData[2] := 0;
+		(* Length LSB *)
+		stMqttTelegram.arMqttData[3] := 4;
+		(* M *)
+		stMqttTelegram.arMqttData[4] := 77;
+		(* Q *)
+		stMqttTelegram.arMqttData[5] := 81;
+		(* T *)
+		stMqttTelegram.arMqttData[6] := 84;
+		(* T *)
+		stMqttTelegram.arMqttData[7] := 84;
+		(* Protocol Level *)
+		stMqttTelegram.arMqttData[8] := 4;
+		(* Connect Flags *)
+		stMqttTelegram.arMqttData[9].1 := TRUE;
+		(* Keep Alive MSB *)
+		stMqttTelegram.arMqttData[10] := 0;
+		(* Keep Alive LSB *)
+		stMqttTelegram.arMqttData[11] := stMqttSettings.usKeepAliveTime;
+		(* Data length MSB *)
+		stMqttTelegram.arMqttData[12] := 0;
+		(* Data length LSB *)
+		stMqttTelegram.arMqttData[13] := INT_TO_BYTE(idLength);
+
+		(* Client ID *)
+		MEMCPY(
+			destAddr	:= ADR(stMqttTelegram.arMqttData[14]),
+		    srcAddr		:= ADR(stMqttSettings.sMqttClientId),
+			n  			:= idLength
+		);
+
+		stMqttTelegram.nDataLength 	:= stMqttTelegram.arMqttData[1] + 2; (* 1 byte header, 1 byte remaining length *)
+		iState 						:= C_SEND_WAIT;
+
+	(* send telegram *)
+	C_SEND_WAIT:
+		IF stMqttSettings.stMqttSendTelegram.nDataLength = 0 THEN
+			FC_Mqtt_CopyTelegram_V10(
+				stMqttSrcTelegram	:= stMqttTelegram,
+				stMqttDestTelegram	:= stMqttSettings.stMqttSendTelegram,
+				stMqttSettings		:= stMqttSettings
+			);
+
+			stMqttSettings.bConnectPackageSent	:= TRUE;
+			iState								:= C_IDLE;
+		END_IF;
+
+		IF
+			NOT stMqttSettings.bActive
+			OR NOT stMqttSettings.bSocketConnection
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* idle *)
+	C_IDLE:
+		IF
+			NOT stMqttSettings.bDisconnect
+			AND NOT stMqttSettings.bError
+			AND NOT stMqttSettings.bConnected
+			AND stMqttSettings.bSocketConnection
+			AND NOT stMqttSettings.bConnectPackageSent
+			AND stMqttSettings.bActive
+		THEN
+			iState := C_BUILD_CONNECT;
+		END_IF;
+
+		(* check received telegram *)
+		IF
+			stMqttSettings.bConnectPackageSent
+			AND stMqttSettings.stMqttReceivedTelegram.nDataLength = 4
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[0] = 32
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[1] = 2
+			AND (
+				(* Session pressent or not, we ignore *)
+				stMqttSettings.stMqttReceivedTelegram.arMqttData[2] = 1
+				OR
+				stMqttSettings.stMqttReceivedTelegram.arMqttData[2] = 0
+			)
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[3] = 0
+		THEN
+			stMqttSettings.bConnected := TRUE;
+			FC_Mqtt_ClearTelegram_V10(
+				stMqttTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+				stMqttSettings	:= stMqttSettings
+			);
+		END_IF;
+
+		(* error on connect *)
+		IF
+			stMqttSettings.bConnectPackageSent
+			AND stMqttSettings.stMqttReceivedTelegram.nDataLength = 4
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[0] = 32
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[1] = 2
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[3] <> 0
+		THEN
+			stMqttSettings.bError := TRUE;
+		END_IF;
+
+		IF
+			stMqttSettings.bDisconnect
+			OR stMqttSettings.bError
+			OR NOT stMqttSettings.bSocketConnection
+			OR NOT stMqttSettings.bActive
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	ELSE
+		iState := C_STARTUP;
+END_CASE;
+
+END_FUNCTION_BLOCK

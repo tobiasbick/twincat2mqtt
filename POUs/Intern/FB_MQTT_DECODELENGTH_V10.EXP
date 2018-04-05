@@ -1,0 +1,56 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_Mqtt_DecodeLength_V10
+VAR_INPUT
+	stMqttTelegram : ST_MqttTelegram;
+END_VAR
+VAR_OUTPUT
+	dwLength	: DWORD;
+	bAmount		: BYTE;
+END_VAR
+VAR
+	index			: INT;
+	diMultiplier	: DINT;
+	dwValue			: DWORD;
+END_VAR
+(* @END_DECLARATION := '0' *)
+index			:= 0;
+diMultiplier	:= 1;
+dwValue			:= 0;
+
+REPEAT
+	index := index + 1;
+
+	dwValue := dwValue + (stMqttTelegram.arMqttData[index] AND 127) * diMultiplier;
+	diMultiplier := diMultiplier * 128;
+
+	IF diMultiplier > 128*128*128 THEN
+		dwLength	:= 0;
+		bAmount		:= 0;
+		RETURN;
+	END_IF;
+UNTIL stMqttTelegram.arMqttData[index].7 = 0
+END_REPEAT;
+
+dwLength	:= dwValue;
+bAmount		:= INT_TO_BYTE(index);
+
+(*
+multiplier = 1
+value = 0
+
+do
+	encodedByte = 'next byte from stream'
+	value += (encodedByte AND 127) * multiplier
+	multiplier *= 128
+
+	if (multiplier > 128*128*128)
+		throw Error(Malformed Remaining Length)
+while ((encodedByte AND 128) != 0)
+
+*)
+
+END_FUNCTION_BLOCK

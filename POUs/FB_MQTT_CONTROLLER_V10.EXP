@@ -1,0 +1,195 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_Mqtt_Controller_V10
+VAR_INPUT
+	bActive			: BOOL := FALSE;
+	sMqttClientId	: STRING[23];
+	sMqttBrokerIP	: STRING[15];
+	nMqttBrokerPort	: UDINT := 1883;
+END_VAR
+VAR_OUTPUT
+	bBusy	: BOOL := FALSE;
+END_VAR
+VAR_IN_OUT
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+	iState			: INT := 0;
+	fbSocketConnect	: FB_SocketConnect;
+	fbSocketClose	: FB_SocketClose;
+
+	fbMqttTelegramConnect	: FB_MqttTelegram_Connect_V10;
+	fbMqttTelegramPingReq	: FB_MqttTelegram_PingReq_V10;
+	fbMqttSend				: FB_Mqtt_Send_V10;
+	fbMqttReceive			: FB_Mqtt_Receive_V10;
+END_VAR
+VAR CONSTANT
+	C_STARTUP					: INT := 0;
+	C_CONNECT					: INT := 100;
+	C_CONNECT_WAIT				: INT := 110;
+	C_CLOSE						: INT := 200;
+	C_CLOSE_WAIT				: INT := 210;
+	C_IDLE						: INT := 500;
+END_VAR
+(* @END_DECLARATION := '0' *)
+(*
+ * Connects to mqtt broker
+ * Sends connect message
+ * Sends ping(back)
+ * Sends disconnect
+ *)
+CASE iState OF
+	C_STARTUP:
+		stMqttSettings.bConnected			:= FALSE;
+		stMqttSettings.bConnectPackageSent	:= FALSE;
+		stMqttSettings.bDisconnect			:= FALSE;
+		stMqttSettings.bSocketConnection	:= FALSE;
+		stMqttSettings.bError				:= FALSE;
+		stMqttSettings.bValidConnection		:= FALSE;
+		stMqttSettings.wPackageIdentifier	:= 1;
+		stMqttSettings.bActive				:= bActive;
+		stMqttSettings.hSocket				:= fbSocketConnect.hSocket;
+		stMqttSettings.nMqttBrokerPort		:= nMqttBrokerPort;
+		stMqttSettings.sMqttBrokerIP		:= sMqttBrokerIP;
+		stMqttSettings.sMqttClientId		:= sMqttClientId;
+
+		stMqttSettings.stMqttReceivedTelegram.nDataLength := 0;
+
+		bBusy := FALSE;
+
+		CallMqttBlocks();
+
+		IF bActive THEN
+			iState := C_CONNECT;
+		END_IF;
+
+	(* Start connection *)
+	C_CONNECT:
+		bBusy := TRUE;
+
+		fbSocketConnect(
+			bExecute	:= FALSE
+		);
+
+		fbSocketConnect(
+			sSrvNetId	:= '',
+			sRemoteHost	:= sMqttBrokerIP,
+			nRemotePort	:= nMqttBrokerPort,
+			bExecute	:= TRUE,
+			tTimeout	:= USINT_TO_TIME(stMqttSettings.usKeepAliveTime) + t#10s
+		);
+
+		iState := C_CONNECT_WAIT;
+
+	(* Wait till connected *)
+	C_CONNECT_WAIT:
+		fbSocketConnect(
+			bExecute := FALSE
+		);
+
+		IF
+			NOT fbSocketConnect.bBusy
+			AND NOT fbSocketConnect.bError
+		THEN
+			iState 								:= C_IDLE;
+			stMqttSettings.hSocket				:= fbSocketConnect.hSocket;
+			stMqttSettings.bSocketConnection	:= TRUE;
+		END_IF;
+
+		IF fbSocketConnect.bError THEN
+			iState := C_STARTUP;
+		END_IF;
+
+		IF NOT stMqttSettings.bActive THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* Close connection *)
+	C_CLOSE:
+		bBusy := TRUE;
+
+		fbSocketClose(
+			bExecute	:= TRUE,
+			hSocket		:= stMqttSettings.hSocket
+		);
+
+		iState := C_CLOSE_WAIT;
+
+	(* Wait close connection *)
+	C_CLOSE_WAIT:
+		fbSocketClose(
+			bExecute := FALSE
+		);
+
+		IF
+			NOT fbSocketClose.bBusy
+			AND NOT fbSocketClose.bError
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+		IF fbSocketClose.bError THEN
+			iState := C_STARTUP;
+		END_IF;
+
+		IF NOT stMqttSettings.bActive THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* Idle *)
+	C_IDLE:
+		bBusy 					:= FALSE;
+		stMqttSettings.bActive	:= bActive;
+
+		stMqttSettings.bValidConnection :=
+			NOT stMqttSettings.bError
+			AND NOT stMqttSettings.bDisconnect
+			AND stMqttSettings.bConnected
+			AND stMqttSettings.bSocketConnection
+			AND stMqttSettings.bActive;
+
+		CallMqttBlocks();
+
+		IF
+			stMqttSettings.bDisconnect
+			OR stMqttSettings.bError
+			OR NOT stMqttSettings.bActive
+		THEN
+			IF
+				stMqttSettings.bConnected
+				OR stMqttSettings.bSocketConnection
+			THEN
+				(* TODO : send disconnect *)
+				iState := C_CLOSE;
+			ELSE
+				iState := C_CLOSE;
+			END_IF;
+		END_IF;
+
+	ELSE
+		iState := C_STARTUP;
+END_CASE;
+
+END_FUNCTION_BLOCK
+ACTION	CallMqttBlocks:
+fbMqttReceive(
+	stMqttSettings := stMqttSettings
+);
+
+fbMqttTelegramConnect(
+	stMqttSettings := stMqttSettings
+);
+
+fbMqttTelegramPingReq(
+	stMqttSettings := stMqttSettings
+);
+
+fbMqttSend(
+	stMqttSettings := stMqttSettings
+);
+
+END_ACTION
+

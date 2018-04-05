@@ -1,0 +1,232 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_Mqtt_Subscribe_V10
+VAR_INPUT
+	sTopic	: STRING[255];
+	bAccept	: BOOL := FALSE; (* When false, subscribe but do not set bNewValue output *)
+END_VAR
+VAR_OUTPUT
+	sValue		: STRING[255];
+	bNewValue	: BOOL := FALSE;
+	bBusy		: BOOL := FALSE;
+END_VAR
+VAR_IN_OUT
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+	iState 				: INT := 0;
+	bSubscribeSent		: BOOL := FALSE;
+	bSubAckReceived		: BOOL := FALSE;
+	iTopicLength		: INT := 0;
+	wTopicLength		: WORD;
+	stMqttTelegram		: ST_MqttTelegram;
+	fbMqttEncodeLength	: FB_Mqtt_EncodeLength_V10;
+	bLength1			: BYTE;
+	bLength2			: BYTE;
+	bLength3			: BYTE;
+	bLength4			: BYTE;
+	bLengthAmount		: BYTE;
+
+	wPackageIdentifier			: WORD;
+	wTelegramPackageIdentifier	: WORD;
+END_VAR
+VAR CONSTANT
+	C_STARTUP			: INT := 0;
+	C_BUILD_TELEGRAM	: INT := 100;
+	C_SEND_WAIT			: INT := 110;
+	C_CHECK_TELEGRAM	: INT := 200;
+	C_IDLE				: INT := 500;
+END_VAR
+
+(* @END_DECLARATION := '0' *)
+CASE iState OF
+	C_STARTUP:
+		wPackageIdentifier 	:= 0;
+		bSubscribeSent		:= FALSE;
+		bSubAckReceived		:= FALSE;
+		bNewValue			:= FALSE;
+		sValue 				:= '';
+		bBusy				:= FALSE;
+
+		IF stMqttSettings.bValidConnection THEN
+			iState := C_IDLE;
+		END_IF;
+
+	(* build publish telegram *)
+	C_BUILD_TELEGRAM:
+		bBusy 								:= TRUE;
+		wPackageIdentifier 					:= stMqttSettings.wPackageIdentifier;
+		stMqttSettings.wPackageIdentifier 	:= stMqttSettings.wPackageIdentifier + 1;
+		iTopicLength						:= LEN(sTopic);
+
+		FC_Mqtt_ClearTelegram_V10(
+			stMqttTelegram	:= stMqttTelegram,
+			stMqttSettings	:= stMqttSettings
+		);
+
+		wTopicLength := iTopicLength;
+		wTopicLength := HOST_TO_BE16(wTopicLength);
+
+		wTelegramPackageIdentifier := HOST_TO_BE16(wPackageIdentifier);
+
+		(* Calculate length *)
+		(* 2 byte package identifier, 2 byte length topic, x byte length topic, 1 byte QoS *)
+		fbMqttEncodeLength(
+			dwLength := 2 + 2 + iTopicLength + 1,
+			bLength1 => bLength1,
+			bLength2 => bLength2,
+			bLength3 => bLength3,
+			bLength4 => bLength4,
+			bAmount	 => bLengthAmount
+		);
+
+		(* MQTT Control Packet type *)
+		stMqttTelegram.arMqttData[0] := 130;
+
+		(* Remaining Length *)
+		CASE bLengthAmount OF
+			1:
+				stMqttTelegram.arMqttData[1] := bLength1;
+
+			2:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+
+			3:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+				stMqttTelegram.arMqttData[3] := bLength3;
+
+			4:
+				stMqttTelegram.arMqttData[1] := bLength1;
+				stMqttTelegram.arMqttData[2] := bLength2;
+				stMqttTelegram.arMqttData[3] := bLength3;
+				stMqttTelegram.arMqttData[4] := bLength4;
+
+			ELSE
+				iState 					:= C_STARTUP;
+				stMqttSettings.bError	:= TRUE;
+		END_CASE;
+
+		(* Packet Identifier MSB *)
+		stMqttTelegram.arMqttData[1 + bLengthAmount] := WORD_TO_BYTE(wTelegramPackageIdentifier);
+		(* Packet Identifier LSB *)
+		stMqttTelegram.arMqttData[2 + bLengthAmount] := WORD_TO_BYTE(SHR(wTelegramPackageIdentifier, 8));
+		(* Length MSB Topic *)
+		stMqttTelegram.arMqttData[3 + bLengthAmount] := WORD_TO_BYTE(wTopicLength);
+		(* Length MSB Topic *)
+		stMqttTelegram.arMqttData[4 + bLengthAmount] := WORD_TO_BYTE(SHR(wTopicLength, 8));
+
+		(* Add topic *)
+		MEMCPY(
+			destAddr	:= ADR(stMqttTelegram.arMqttData[5 + bLengthAmount]),
+		    srcAddr		:= ADR(sTopic),
+			n  			:= iTopicLength
+		);
+
+		(* 1 byte header, x byte variable length, 2 byte package identifier, 2 byte topic lenght, x byte topic, 1 byte QoS *)
+		stMqttTelegram.nDataLength := 1 + bLengthAmount + 2 + 2 + iTopicLength + 1;
+
+		iState := C_SEND_WAIT;
+
+	(* send telegram *)
+	C_SEND_WAIT:
+		IF stMqttSettings.stMqttSendTelegram.nDataLength = 0 THEN
+			FC_Mqtt_CopyTelegram_V10(
+				stMqttSrcTelegram	:= stMqttTelegram,
+				stMqttDestTelegram	:= stMqttSettings.stMqttSendTelegram,
+				stMqttSettings		:= stMqttSettings
+			);
+
+			bSubscribeSent	:= TRUE;
+			iState			:= C_IDLE;
+		END_IF;
+
+		IF NOT stMqttSettings.bValidConnection THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* check telegram *)
+	C_CHECK_TELEGRAM:
+		bBusy 			:= TRUE;
+
+		IF
+			stMqttSettings.stMqttReceivedPublishTelegram.bHasData
+			AND stMqttSettings.stMqttReceivedPublishTelegram.sTopic = sTopic
+		THEN
+			FC_Mqtt_ClearTelegram_V10(
+				stMqttTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+				stMqttSettings	:= stMqttSettings
+			);
+			stMqttSettings.stMqttReceivedPublishTelegram.bHasData := FALSE;
+
+			sValue		:= stMqttSettings.stMqttReceivedPublishTelegram.sValue;
+			bNewValue 	:= TRUE;
+		END_IF;
+
+		iState := C_IDLE;
+
+	(* idle *)
+	C_IDLE:
+		bBusy 		:= FALSE;
+		bNewValue	:= FALSE;
+
+		IF
+			stMqttSettings.bValidConnection
+			AND NOT bSubscribeSent
+			AND NOT bSubAckReceived
+		THEN
+			iState := C_BUILD_TELEGRAM;
+		END_IF;
+
+		(* Check for correct SubAck *)
+		IF
+			bSubscribeSent
+			AND stMqttSettings.stMqttReceivedTelegram.nDataLength = 5
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[0] = 144
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[1] = 3
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[2] = WORD_TO_BYTE(wTelegramPackageIdentifier)
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[3] = WORD_TO_BYTE(SHR(wTelegramPackageIdentifier, 8))
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[4] = 0
+		THEN
+			FC_Mqtt_ClearTelegram_V10(
+				stMqttTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+				stMqttSettings	:= stMqttSettings
+			);
+			bSubAckReceived := TRUE;
+		END_IF;
+
+		(* Check for error SubAck *)
+		IF
+			bSubscribeSent
+			AND stMqttSettings.stMqttReceivedTelegram.nDataLength = 5
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[0] = 144
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[1] = 3
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[2] = WORD_TO_BYTE(wTelegramPackageIdentifier)
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[3] = WORD_TO_BYTE(SHR(wTelegramPackageIdentifier, 8))
+			AND stMqttSettings.stMqttReceivedTelegram.arMqttData[4].7 = 1
+		THEN
+			stMqttSettings.bError := TRUE;
+		END_IF;
+
+		(* Check for publish *)
+		IF
+			bSubAckReceived
+			AND stMqttSettings.stMqttReceivedPublishTelegram.bHasData
+			AND bAccept
+		THEN
+			iState := C_CHECK_TELEGRAM;
+		END_IF;
+
+		IF NOT stMqttSettings.bValidConnection THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	ELSE
+		iState := C_STARTUP;
+END_CASE;
+
+END_FUNCTION_BLOCK

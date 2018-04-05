@@ -1,0 +1,37 @@
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '' *)
+(* @OBJECTFLAGS := '0, 8' *)
+TYPE ST_MqttSettings :
+STRUCT
+	(* informations *)
+	sMqttClientId	: STRING[23];
+	sMqttBrokerIP	: STRING[15];
+	nMqttBrokerPort	: UDINT := 1883;
+
+	(* state *)
+	bSocketConnection	: BOOL := FALSE;
+	bConnected			: BOOL := FALSE;
+	bConnectPackageSent	: BOOL := FALSE;
+	bDisconnect			: BOOL := FALSE;
+	bError				: BOOL := FALSE;
+	bValidConnection	: BOOL := FALSE;
+	bActive				: BOOL := FALSE;
+	wPackageIdentifier	: WORD := 1;
+	hSocket				: T_HSOCKET;
+	tonSendPingReq		: TON;
+
+	(* send *)
+	stMqttSendTelegram			: ST_MqttTelegram;
+	stMqttLastSendTelegram		: ST_MqttTelegram;
+
+	(* receive *)
+	stMqttReceivedTelegram			: ST_MqttTelegram;
+	stMqttLastReceivedTelegram		: ST_MqttTelegram;
+	stMqttReceivedPublishTelegram	: ST_MqttReceivedPublishTelegram;
+
+	(* settings internal *)
+	iTelegramSize	: INT := 544;
+	usKeepAliveTime	: USINT := 60; (* seconds *)
+END_STRUCT
+END_TYPE
+(* @END_DECLARATION := '0' *)

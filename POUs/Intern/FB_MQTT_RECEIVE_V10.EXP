@@ -1,0 +1,324 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION_BLOCK FB_Mqtt_Receive_V10
+VAR_OUTPUT
+	bBusy	: BOOL := FALSE;
+END_VAR
+VAR_IN_OUT
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+	fbSocketReceive		: FB_SocketReceive;
+	fbMqttDecodeLength	: FB_Mqtt_DecodeLength_V10;
+	stReceiveBuffer		: ST_MqttTelegram;
+
+	iState 			: INT := 0;
+	iLengthPosition	: INT := 0;
+	index			: INT := 0;
+	dwDataLength	: DWORD := 0;
+	wTopicLength	: WORD := 0;
+	dwValueLength	: DWORD := 0;
+END_VAR
+VAR CONSTANT
+	C_STARTUP				: INT := 0;
+	C_RECEIVE_HEADER		: INT := 100;
+	C_RECEIVE_HEADER_WAIT	: INT := 110;
+	C_RECEIVE_LENGTH		: INT := 120;
+	C_RECEIVE_LENGTH_WAIT	: INT := 130;
+	C_RECEIVE_DATA			: INT := 200;
+	C_RECEIVE_DATA_WAIT		: INT := 210;
+	C_IDLE					: INT := 500;
+END_VAR
+
+(* @END_DECLARATION := '0' *)
+CASE iState OF
+	C_STARTUP:
+		bBusy 			:= FALSE;
+		iLengthPosition	:= 0;
+		index			:= 0;
+		dwDataLength	:= 0;
+		wTopicLength	:= 0;
+		dwValueLength	:= 0;
+		ClearReceivedPublishTelegram();
+
+		IF
+			NOT stMqttSettings.bDisconnect
+			AND NOT stMqttSettings.bError
+			AND stMqttSettings.bSocketConnection
+		THEN
+			iState := C_IDLE;
+		END_IF;
+
+	(* start receive header *)
+	C_RECEIVE_HEADER:
+		bBusy := TRUE;
+		ClearReceivedPublishTelegram();
+
+		fbSocketReceive(
+			bExecute := FALSE
+		);
+
+		fbSocketReceive(
+			sSrvNetId	:= '',
+			hSocket		:= stMqttSettings.hSocket,
+			cbLen		:= 2,
+			pDest		:= ADR(stReceiveBuffer.arMqttData),
+			bExecute 	:= TRUE
+		);
+
+		iState := C_RECEIVE_HEADER_WAIT;
+
+	(* wait for header with length *)
+	C_RECEIVE_HEADER_WAIT:
+		fbSocketReceive(
+			bExecute := FALSE
+		);
+
+		IF
+			NOT fbSocketReceive.bBusy
+			AND NOT fbSocketReceive.bError
+			AND fbSocketReceive.nRecBytes = 2
+		THEN
+			iLengthPosition	:= 0;
+			stMqttSettings.stMqttReceivedTelegram.arMqttData[0] := stReceiveBuffer.arMqttData[0];
+			stMqttSettings.stMqttReceivedTelegram.arMqttData[1] := stReceiveBuffer.arMqttData[1];
+
+			IF stMqttSettings.stMqttReceivedTelegram.arMqttData[1].7 = 1 THEN
+				(* payload longer then 127 byte *)
+				iLengthPosition := iLengthPosition + 1;
+				iState			:= C_RECEIVE_LENGTH;
+			ELSE
+				IF stMqttSettings.stMqttReceivedTelegram.arMqttData[1] = 0 THEN
+					(* no payload received *)
+					stMqttSettings.stMqttReceivedTelegram.nDataLength := 2;
+
+					(* copy last telegram *)
+					FC_Mqtt_CopyTelegram_V10(
+						stMqttSrcTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+						stMqttDestTelegram	:= stMqttSettings.stMqttLastReceivedTelegram,
+						stMqttSettings		:= stMqttSettings
+					);
+
+					iState	:= C_IDLE;
+					bBusy 	:= FALSE;
+				ELSE
+					iState := C_RECEIVE_DATA;
+				END_IF;
+			END_IF;
+		END_IF;
+
+		IF fbSocketReceive.bError THEN
+			iState 					:= C_STARTUP;
+			stMqttSettings.bError	:= TRUE;
+		END_IF;
+
+		IF fbSocketReceive.nRecBytes = 0 THEN
+			iState	:= C_IDLE;
+			bBusy	:= FALSE;
+		END_IF;
+
+		IF
+			NOT stMqttSettings.bActive
+			OR NOT stMqttSettings.bSocketConnection
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* read next remaining length *)
+	C_RECEIVE_LENGTH:
+		fbSocketReceive(
+			bExecute := FALSE
+		);
+
+		fbSocketReceive(
+			sSrvNetId	:= '',
+			hSocket		:= stMqttSettings.hSocket,
+			cbLen		:= 1,
+			pDest		:= ADR(stReceiveBuffer.arMqttData),
+			bExecute 	:= TRUE
+		);
+
+		iState := C_RECEIVE_LENGTH_WAIT;
+
+	(* wait for remaining length *)
+	C_RECEIVE_LENGTH_WAIT:
+		fbSocketReceive(
+			bExecute := FALSE
+		);
+
+		IF
+			NOT fbSocketReceive.bBusy
+			AND NOT fbSocketReceive.bError
+			AND fbSocketReceive.nRecBytes = 1
+		THEN
+			stMqttSettings.stMqttReceivedTelegram.arMqttData[1 + iLengthPosition] := stReceiveBuffer.arMqttData[0];
+
+			IF stMqttSettings.stMqttReceivedTelegram.arMqttData[1 + iLengthPosition].7 = 1 THEN
+				(* read next length byte *)
+				iLengthPosition := iLengthPosition + 1;
+				iState			:= C_RECEIVE_LENGTH;
+
+				(* Not more the 4 length bytes *)
+				IF iLengthPosition > 4 THEN
+					iState 					:= C_STARTUP;
+					stMqttSettings.bError	:= TRUE;
+				END_IF;
+			ELSE
+				iState := C_RECEIVE_DATA;
+			END_IF;
+		END_IF;
+
+		IF fbSocketReceive.bError THEN
+			iState 					:= C_STARTUP;
+			stMqttSettings.bError	:= TRUE;
+		END_IF;
+
+		IF
+			NOT stMqttSettings.bActive
+			OR NOT stMqttSettings.bSocketConnection
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* receive remaining data *)
+	C_RECEIVE_DATA:
+		fbMqttDecodeLength(
+			stMqttTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+			dwLength		=> dwDataLength
+		);
+
+		fbSocketReceive(
+			bExecute := FALSE
+		);
+
+		fbSocketReceive(
+			sSrvNetId	:= '',
+			hSocket		:= stMqttSettings.hSocket,
+			cbLen		:= dwDataLength,
+			pDest		:= ADR(stReceiveBuffer.arMqttData),
+			bExecute 	:= TRUE
+		);
+
+		iState := C_RECEIVE_DATA_WAIT;
+
+	(* receive *)
+	C_RECEIVE_DATA_WAIT:
+		fbSocketReceive(
+			bExecute := FALSE
+		);
+
+		IF
+			NOT fbSocketReceive.bBusy
+			AND NOT fbSocketReceive.bError
+			AND fbSocketReceive.nRecBytes > 0
+		THEN
+			MEMCPY(
+				destAddr	:= ADR(stMqttSettings.stMqttReceivedTelegram.arMqttData[2 + iLengthPosition]),
+			    srcAddr		:= ADR(stReceiveBuffer.arMqttData),
+				n  			:= fbSocketReceive.nRecBytes
+			);
+			stMqttSettings.stMqttReceivedTelegram.nDataLength := 2 + iLengthPosition + fbSocketReceive.nRecBytes;
+
+			(* copy last telegram *)
+			FC_Mqtt_CopyTelegram_V10(
+				stMqttSrcTelegram	:= stMqttSettings.stMqttReceivedTelegram,
+				stMqttDestTelegram	:= stMqttSettings.stMqttLastReceivedTelegram,
+				stMqttSettings		:= stMqttSettings
+			);
+
+			(* check for publish *)
+			IF (stMqttSettings.stMqttReceivedTelegram.arMqttData[0] AND 48) = 48 THEN
+				ClearReceivedPublishTelegram();
+
+				(* Length MSB/LSB Topic *)
+				wTopicLength :=
+						SHL(BYTE_TO_WORD(stMqttSettings.stMqttReceivedTelegram.arMqttData[2 + iLengthPosition + 1]), 8) +
+						BYTE_TO_WORD(stMqttSettings.stMqttReceivedTelegram.arMqttData[1 + iLengthPosition + 1]);
+				wTopicLength := BE16_TO_HOST(wTopicLength);
+
+				(* Copy topic *)
+				MEMCPY(
+					destAddr	:= ADR(stMqttSettings.stMqttReceivedPublishTelegram.sTopic),
+				    srcAddr		:= ADR(stMqttSettings.stMqttReceivedTelegram.arMqttData[3 + iLengthPosition + 1]),
+					n  			:= wTopicLength
+				);
+
+				(* Copy value *)
+				(* value length = remaining data length - length topic value - 2 byte topic length *)
+				dwValueLength := dwDataLength - wTopicLength - 2;
+
+				MEMCPY(
+					destAddr	:= ADR(stMqttSettings.stMqttReceivedPublishTelegram.sValue),
+				    srcAddr		:= ADR(stMqttSettings.stMqttReceivedTelegram.arMqttData[3 + iLengthPosition + 1 + wTopicLength]),
+					n  			:= dwValueLength
+				);
+
+				stMqttSettings.stMqttReceivedPublishTelegram.bHasData := TRUE;
+			END_IF;
+
+			iState	:= C_IDLE;
+			bBusy	:= FALSE;
+		END_IF;
+
+		IF fbSocketReceive.bError THEN
+			iState 					:= C_STARTUP;
+			stMqttSettings.bError	:= TRUE;
+		END_IF;
+
+		IF
+			NOT stMqttSettings.bActive
+			OR NOT stMqttSettings.bSocketConnection
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+	(* idle *)
+	C_IDLE:
+		IF
+			NOT stMqttSettings.bDisconnect
+			AND NOT stMqttSettings.bError
+			AND stMqttSettings.bSocketConnection
+			AND NOT bBusy
+		THEN
+			iState := C_RECEIVE_HEADER;
+		END_IF;
+
+		IF
+			stMqttSettings.bDisconnect
+			OR stMqttSettings.bError
+			OR NOT stMqttSettings.bSocketConnection
+		THEN
+			iState := C_STARTUP;
+		END_IF;
+
+		(* ensure at least 1 cycle pause *)
+		(* bBusy := FALSE; *)
+
+	ELSE
+		iState := C_STARTUP;
+END_CASE;
+
+END_FUNCTION_BLOCK
+ACTION	ClearReceivedPublishTelegram:
+(* Clear data *)
+MEMSET(
+	destAddr	:= ADR(stMqttSettings.stMqttReceivedPublishTelegram.sTopic),
+	fillByte  	:= 0,
+	n			:= 255
+);
+stMqttSettings.stMqttReceivedPublishTelegram.sTopic := '';
+
+MEMSET(
+	destAddr	:= ADR(stMqttSettings.stMqttReceivedPublishTelegram.sValue),
+	fillByte  	:= 0,
+	n			:= 255
+);
+stMqttSettings.stMqttReceivedPublishTelegram.sValue := '';
+
+stMqttSettings.stMqttReceivedPublishTelegram.bHasData := FALSE;
+
+END_ACTION
+

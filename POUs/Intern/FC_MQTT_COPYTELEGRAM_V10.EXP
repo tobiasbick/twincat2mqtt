@@ -1,0 +1,23 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION FC_Mqtt_CopyTelegram_V10 : BOOL
+VAR_IN_OUT
+	stMqttSrcTelegram	: ST_MqttTelegram;
+	stMqttDestTelegram	: ST_MqttTelegram;
+	stMqttSettings		: ST_MqttSettings;
+END_VAR
+VAR
+END_VAR
+(* @END_DECLARATION := '0' *)
+MEMCPY(
+	destAddr	:= ADR(stMqttDestTelegram.arMqttData),
+    srcAddr		:= ADR(stMqttSrcTelegram.arMqttData),
+	n  			:= stMqttSettings.iTelegramSize
+);
+
+stMqttDestTelegram.nDataLength := stMqttSrcTelegram.nDataLength;
+
+END_FUNCTION

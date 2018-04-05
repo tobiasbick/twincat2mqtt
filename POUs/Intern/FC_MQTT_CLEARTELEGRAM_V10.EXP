@@ -1,0 +1,22 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '\/_Generic\/Mqtt\/Intern' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+FUNCTION FC_Mqtt_ClearTelegram_V10 : BOOL
+VAR_IN_OUT
+	stMqttTelegram	: ST_MqttTelegram;
+	stMqttSettings	: ST_MqttSettings;
+END_VAR
+VAR
+END_VAR
+(* @END_DECLARATION := '0' *)
+MEMSET(
+	destAddr	:= ADR(stMqttTelegram.arMqttData),
+	fillByte  	:= 0,
+	n			:= stMqttSettings.iTelegramSize
+);
+
+stMqttTelegram.nDataLength := 0;
+
+END_FUNCTION
