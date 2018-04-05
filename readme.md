@@ -1,11 +1,11 @@
 # Very simple Twincat2 Mqtt Function Blocks
 
-I use this very simple function block to control a floor in our house. 
+I use this very simple function blocks to control a floor in our house. 
 As broker i use Mosquitto. "Smart home" is done with OpenHab. Alexa is also working a bit thanks to OpenHab.
 
 Uses MQTT Version 3.1.1. See http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html.
 
-It does not send the DICONNECT telegram!
+It does not send the DICONNECT telegram!  
 No last will, not QoS, no username and password, not HTTPS, no nothing. 
 
 My CX8090 needs around 30ms cycle time with about 210 publish and about 230 subscribe calls (used global search).
@@ -89,6 +89,6 @@ Switch Light "A room name" <light>
     autoupdate="false"  
 }
 
-### Mapping file (Filename: onoff.map in mappings directory)
+### Mapping file (Filename: onoff.map in transform directory)
 0=OFF  
 1=ON
