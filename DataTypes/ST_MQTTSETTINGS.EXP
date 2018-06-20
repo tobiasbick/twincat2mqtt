@@ -5,6 +5,8 @@ TYPE ST_MqttSettings :
 STRUCT
 	(* informations *)
 	sMqttClientId	: STRING[23];
+	sMqttUserId	: STRING[25];
+	sMqttPassword	: STRING[25];
 	sMqttBrokerIP	: STRING[15];
 	nMqttBrokerPort	: UDINT := 1883;
 
