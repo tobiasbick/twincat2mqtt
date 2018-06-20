@@ -6,7 +6,7 @@ As broker i use Mosquitto. "Smart home" is done with OpenHab. Alexa is also work
 Uses MQTT Version 3.1.1. See http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html.
 
 It does not send the DICONNECT telegram!  
-No last will, not QoS, no username and password, not HTTPS, no nothing. 
+No last will, not QoS, not HTTPS, no nothing. 
 
 My CX8090 needs around 30ms cycle time with about 210 publish and about 230 subscribe calls (used global search).
 
@@ -35,6 +35,8 @@ Controls the connection to the MQTT broker. When bActive is TRUE it starts a con
 #### Inputs:
 bActive = Use MQTT (connect to the broker)  
 sMqttClientId = A client id like "MyMqttClient"  
+sMqttUserId = A user id for the broker connection ('' = none), defaults to '', caution: transmitted unencrypted  
+sMqttPassword = A password for the broker connection ('' = none), defaults to '', caution: transmitted unencrypted  
 sMqttBrokerIP = The IPV4 address from the broker  
 nMqttBrokerPort = The port from the broker, normaly 1883
 
