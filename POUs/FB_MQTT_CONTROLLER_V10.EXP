@@ -7,6 +7,8 @@ FUNCTION_BLOCK FB_Mqtt_Controller_V10
 VAR_INPUT
 	bActive			: BOOL := FALSE;
 	sMqttClientId	: STRING[23];
+	sMqttUserId	: STRING[25] := '';
+	sMqttPassword	: STRING[25] := '';
 	sMqttBrokerIP	: STRING[15];
 	nMqttBrokerPort	: UDINT := 1883;
 END_VAR
@@ -55,6 +57,8 @@ CASE iState OF
 		stMqttSettings.nMqttBrokerPort		:= nMqttBrokerPort;
 		stMqttSettings.sMqttBrokerIP		:= sMqttBrokerIP;
 		stMqttSettings.sMqttClientId		:= sMqttClientId;
+		stMqttSettings.sMqttUserId		:= sMqttUserId;
+		stMqttSettings.sMqttPassword		:= sMqttPassword;
 
 		stMqttSettings.stMqttReceivedTelegram.nDataLength := 0;
 
