@@ -10,6 +10,9 @@ END_VAR
 VAR
 	iState 				: INT := 0;
 	idLength			: INT;
+	iuLength			: INT;
+	ipLength			: INT;
+	ipos				: INT;
 	stMqttTelegram		: ST_MqttTelegram;
 	fbMqttEncodeLength	: FB_Mqtt_EncodeLength_V10;
 	bLength1			: BYTE;
@@ -47,16 +50,20 @@ CASE iState OF
 		idLength := LEN(stMqttSettings.sMqttClientId);
 		IF idLength < 1 THEN
 			stMqttSettings.sMqttClientId := 'x';
+			idLength := 1;
 		END_IF;
 
 		IF idLength > 23 THEN
 			idLength := 23;
 		END_IF;
 
+		iuLength := LEN(stMqttSettings.sMqttUserId)+2; (* 2 byte data length*)
+		ipLength := LEN(stMqttSettings.sMqttPassword)+2; (* 2 byte data length*)
+
 		(* Calculate length *)
-		(* 10 byte header, 2 byte data length, data length *)
+		(* 10 byte header, 2 byte data length, data length, [user length + 2], [password length + 2]*)
 		fbMqttEncodeLength(
-			dwLength := 10 + 2 + INT_TO_BYTE(idLength),
+			dwLength := 10 + 2 + INT_TO_BYTE(idLength) + INT_TO_BYTE(iuLength) + INT_TO_BYTE(ipLength),
 			bLength1 => bLength1,
 			bLength2 => bLength2,
 			bLength3 => bLength3,
@@ -86,39 +93,75 @@ CASE iState OF
 				stMqttTelegram.arMqttData[3] := bLength3;
 				stMqttTelegram.arMqttData[4] := bLength4;
 		END_CASE;
+		(* init position*)
+		ipos := bLengthAmount;
+
 		(* Length MSB *)
-		stMqttTelegram.arMqttData[2] := 0;
+		stMqttTelegram.arMqttData[ipos+1] := 0;
 		(* Length LSB *)
-		stMqttTelegram.arMqttData[3] := 4;
+		stMqttTelegram.arMqttData[ipos+2] := 4;
 		(* M *)
-		stMqttTelegram.arMqttData[4] := 77;
+		stMqttTelegram.arMqttData[ipos+3] := 77;
 		(* Q *)
-		stMqttTelegram.arMqttData[5] := 81;
+		stMqttTelegram.arMqttData[ipos+4] := 81;
 		(* T *)
-		stMqttTelegram.arMqttData[6] := 84;
+		stMqttTelegram.arMqttData[ipos+5] := 84;
 		(* T *)
-		stMqttTelegram.arMqttData[7] := 84;
+		stMqttTelegram.arMqttData[ipos+6] := 84;
 		(* Protocol Level *)
-		stMqttTelegram.arMqttData[8] := 4;
+		stMqttTelegram.arMqttData[ipos+7] := 4;
 		(* Connect Flags *)
-		stMqttTelegram.arMqttData[9].1 := TRUE;
+		stMqttTelegram.arMqttData[ipos+8].1 := TRUE;
+		stMqttTelegram.arMqttData[ipos+8].6 := (ipLength>2); (* more then 2 byte data length*)
+		stMqttTelegram.arMqttData[ipos+8].7 := (iuLength>2); (* more then 2 byte data length*)
 		(* Keep Alive MSB *)
-		stMqttTelegram.arMqttData[10] := 0;
+		stMqttTelegram.arMqttData[ipos+9] := 0;
 		(* Keep Alive LSB *)
-		stMqttTelegram.arMqttData[11] := stMqttSettings.usKeepAliveTime;
+		stMqttTelegram.arMqttData[ipos+10] := stMqttSettings.usKeepAliveTime;
 		(* Data length MSB *)
-		stMqttTelegram.arMqttData[12] := 0;
+		stMqttTelegram.arMqttData[ipos+11] := 0;
 		(* Data length LSB *)
-		stMqttTelegram.arMqttData[13] := INT_TO_BYTE(idLength);
+		stMqttTelegram.arMqttData[ipos+12] := INT_TO_BYTE(idLength);
 
 		(* Client ID *)
 		MEMCPY(
-			destAddr	:= ADR(stMqttTelegram.arMqttData[14]),
+			destAddr	:= ADR(stMqttTelegram.arMqttData[ipos+13]),
 		    srcAddr		:= ADR(stMqttSettings.sMqttClientId),
 			n  			:= idLength
 		);
 
-		stMqttTelegram.nDataLength 	:= stMqttTelegram.arMqttData[1] + 2; (* 1 byte header, 1 byte remaining length *)
+		ipos := ipos+13+idLength;
+		IF (iuLength > 2) THEN (* more then 2 byte data length*)
+			(* Data length MSB *)
+			stMqttTelegram.arMqttData[ipos] := 0;
+			(* Data length LSB *)
+			stMqttTelegram.arMqttData[ipos+1] := INT_TO_BYTE(iuLength-2);
+
+			(* User ID *)
+			MEMCPY(
+				destAddr	:= ADR(stMqttTelegram.arMqttData[ipos+2]),
+			    srcAddr		:= ADR(stMqttSettings.sMqttUserId),
+				n  			:= iuLength-2
+			);
+			ipos := ipos+iuLength;
+		END_IF
+
+		IF (iuLength > 2) THEN (* more then 2 byte data length*)
+			(* Data length MSB *)
+			stMqttTelegram.arMqttData[ipos] := 0;
+			(* Data length LSB *)
+			stMqttTelegram.arMqttData[ipos+1] := INT_TO_BYTE(ipLength-2);
+
+			(* Password *)
+			MEMCPY(
+				destAddr	:= ADR(stMqttTelegram.arMqttData[ipos+2]),
+			    srcAddr		:= ADR(stMqttSettings.sMqttPassword),
+				n  			:= ipLength-2
+			);
+			ipos := ipos+ipLength;
+		END_IF
+
+		stMqttTelegram.nDataLength 	:= ipos; (* 1 byte header, 1 byte remaining length *)
 		iState 						:= C_SEND_WAIT;
 
 	(* send telegram *)
