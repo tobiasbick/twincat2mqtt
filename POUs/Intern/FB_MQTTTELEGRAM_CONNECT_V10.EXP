@@ -57,8 +57,16 @@ CASE iState OF
 			idLength := 23;
 		END_IF;
 
-		iuLength := LEN(stMqttSettings.sMqttUserId)+2; (* 2 byte data length*)
-		ipLength := LEN(stMqttSettings.sMqttPassword)+2; (* 2 byte data length*)
+		IF
+			LEN(stMqttSettings.sMqttUserId) > 0
+			AND LEN(stMqttSettings.sMqttPassword) > 0
+		THEN
+			iuLength := LEN(stMqttSettings.sMqttUserId)+2; (* 2 byte data length*)
+			ipLength := LEN(stMqttSettings.sMqttPassword)+2; (* 2 byte data length*)
+		ELSE
+			iuLength := 0;
+			ipLength := 0;
+		END_IF
 
 		(* Calculate length *)
 		(* 10 byte header, 2 byte data length, data length, [user length + 2], [password length + 2]*)
@@ -241,5 +249,6 @@ CASE iState OF
 	ELSE
 		iState := C_STARTUP;
 END_CASE;
+
 
 END_FUNCTION_BLOCK
