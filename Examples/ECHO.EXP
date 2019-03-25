@@ -1,0 +1,55 @@
+
+(* @NESTEDCOMMENTS := 'Yes' *)
+(* @PATH := '' *)
+(* @OBJECTFLAGS := '0, 8' *)
+(* @SYMFILEFLAGS := '2048' *)
+PROGRAM MAIN
+VAR
+	fbMqttController	: FB_Mqtt_Controller_V10;
+	stMqttSettings		: ST_MqttSettings;
+	bMqttControllerBusy	: BOOL;
+
+	fbMqttSubscribe		: FB_Mqtt_Subscribe_V10;
+	sSubscribeValue		: STRING[255];
+	bSubscribeNewValue	: BOOL;
+	bSubscribeBusy		: BOOL;
+
+	fbMqttPublish		: FB_Mqtt_Publish_V10;
+	bPublishBusy		: BOOL;
+END_VAR
+(* @END_DECLARATION := '0' *)
+(* Connect to MQTT broker *)
+fbMqttController(
+	bActive			:= TRUE,
+	sMqttClientId	:= 'TestClient',
+	sMqttUserId		:= '',
+	sMqttPassword	:= '',
+	sMqttBrokerIp	:= '127.0.0.1',
+	nMqttBrokerPort	:= 1883,
+	stMqttSettings	:= stMqttSettings,
+	bBusy			=> bMqttControllerBusy
+);
+
+IF bMqttControllerBusy THEN
+	RETURN;
+END_IF
+
+(* Subscribe to a topic *)
+fbMqttSubscribe(
+	sTopic			:= 'test/echo/in',
+	bAccept			:= TRUE,
+	stMqttSettings	:= stMqttSettings,
+	sValue			=> sSubscribeValue,
+	bNewValue		=> bSubscribeNewValue,
+	bBusy			=> bSubscribeBusy
+);
+
+(* Publish value from subscribe *)
+fbMqttPublish(
+	sTopic			:= 'test/echo/out',
+	sValue			:= sSubscribeValue,
+	bRetain			:= TRUE,
+	stMqttSettings	:= stMqttSettings,
+	bBusy			=> bPublishBusy
+);
+END_PROGRAM

@@ -10,6 +10,11 @@ No last will, not QoS, not HTTPS, no nothing.
 
 My CX8090 needs around 30ms cycle time with about 210 publish and about 230 subscribe calls (used global search).
 
+## Needed TwinCat libraries
+
+TcpIp.lib
+TcUtilities.lib
+
 ---
 
 ## DataTypes
@@ -81,6 +86,7 @@ stMqttSettings = A global variable for the datatype ST_MQTTSETTINGS, use the sam
 ## Sample OpenHab item
 
 Below is a sample for a light or switchable plug.
+Old Mqtt1 plugin.
 
 ### Items file (Filename: something.items in items directory)
 Switch Light "A room name" <light>  
